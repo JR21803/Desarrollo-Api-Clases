@@ -335,6 +335,143 @@ let creditos = [
 
 // ENDPOINTS
 
+// CRUD de clientes con documentos
+
+//listar todos los clientes
+
+app.get('/clientes', (req, res) => {
+    res.json(clientes);
+});
+
+//obtener cliente por id
+app.get('/clientes/:id', (req, res) => {
+    const cliente = clientes.find(c => c.id == req.params.id);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(cliente);
+});
+
+//Crear cliente
+
+app.post('/clientes', (req, res)=>{
+    
+    const duiExistente = clientes.find(c => c.dui == req.body.dui);
+    if (duiExistente) return res.status(400).json({ error: 'DUI ya existe' });
+    
+    const nuevo = {
+        id: Date.now(),
+        nombre: req.body.nombre,
+        dui: req.body.dui,
+        ingresos: req.body.ingresos,
+        telefono: req.body.telefono,
+        documentos: []
+    }
+    clientes.push(nuevo);
+    res.status(201).json(nuevo);
+});
+
+
+//actualizar cliente
+app.put('/clientes/:id', (req, res) => {
+    const cliente = clientes.find(c => c.id == req.params.id);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+    cliente.nombre = req.body.nombre;
+    cliente.ingresos = req.body.ingresos;
+    cliente.telefono = req.body.telefono;
+    res.json(cliente);
+});
+
+//eliminar cliente
+app.delete('/clientes/:id', (req, res) => {
+    clientes = clientes.filter(c => c.id != req.params.id);
+    res.status(204).send();
+});
+
+
+//Obtener documentos de un cliente
+app.get('/clientes/:id/documentos', (req, res) => {
+    const cliente = clientes.find(c=> c.id == req.params.id);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(cliente.documentos);
+});
+
+//Agregar documento a un cliente
+app.post('/clientes/:id/documentos', (req, res) => {
+    const cliente = clientes.find(c => c.id == req.params.id);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+    cliente.documentos.push(req.body.documento);
+    res.status(201).json(cliente);
+});
+
+//Eliminar documento de un cliente
+app.delete('/clientes/:id/documentos/:documento', (req, res) => {
+    const cliente = clientes.find(c => c.id == req.params.id);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+    cliente.documentos = cliente.documentos.filter(d => d != req.params.documento);
+    res.status(204).send();
+});
+
+
+// Crear y enviar solicitud de crédito
+
+// Crear solicitud de crédito
+
+app.post('/solicitudes', (req, res) => {
+
+    const cliente = clientes.find(c => c.id == req.body.clienteId);
+    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+
+    const solicitud = {
+        id: Date.now(),
+        clienteId: req.body.clienteId,
+        monto: req.body.monto,
+        plazo: req.body.plazo,
+        proposito: req.body.proposito,
+        estado: "borrador",
+        analisis: null,
+        revision: null,
+        historial: []
+    }
+    solicitudes.push(solicitud);
+    res.status(201).json(solicitud);
+});
+
+// Enviar solicitud de crédito - Analisis del agente
+
+app.post('/solicitudes/:id/analisis', (req, res) => {
+
+    const solicitud = solicitudes.find(s => s.id == req.params.id);
+    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    solicitud.analisis = req.body.analisis;
+    
+    if (solicitud.estado !== 'borrador'){
+        return res.status(400).json({ error: 'Solo se pueden analizar solicitudes en estado borrador' });
+    }
+    
+    solicitud.estado = 'en analisis';
+
+    const cliente = clientes.find(c => c.id == solicitud.clienteId);
+    
+    
+    //NO SE QUE HACER
+    res.json(solicitud);
+
+    
+
+});
+
+
+
+// Consultar análisis del agente
+
+// Ver analisis del agente
+
+app.get('/solicitudes/:id/analisis', (req, res) => {
+
+    const solicitud = solicitudes.find(s => s.id == req.params.id);
+    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
+    res.json(solicitud.analisis);
+});
+
 
 
 app.listen(3000, () => {
