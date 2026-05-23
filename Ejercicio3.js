@@ -419,6 +419,17 @@ app.delete('/clientes/:id/documentos/:documento', (req, res) => {
 });
 
 
+const MAQUINA_ESTADOS = {
+    'borrador': { 'enviada': ['cliente'] },
+    'enviada': { 'en analisis': ['agente'] },
+    'en analisis': { 'en revision': ['agente'] },
+    'en revision': {
+        'aprobada': ['analista'],
+        'rechazada': ['analista'],
+        'borrador': ['analista']
+    }
+};
+
 // Crear y enviar solicitud de crédito
 
 // Crear solicitud de crédito
@@ -443,197 +454,142 @@ app.post('/solicitudes', (req, res) => {
     res.status(201).json(solicitud);
 });
 
-// Enviar solicitud de crédito - Analisis del agente
-
-async function consultarAgenteIA(cliente, solicitud) {
-    const prompt = `
-    Eres un Agente Virtual de Riesgo Crediticio. 
-    Analiza la siguiente solicitud:
-    - Cliente: ${cliente.nombre}
-    - Ingresos mensuales: $${cliente.ingresos}
-    - Documentos entregados: ${cliente.documentos.join(', ')}
-    - Monto solicitado: $${solicitud.monto} a ${solicitud.plazo} meses.
-    - Propósito: ${solicitud.proposito}
-
-    Responde ÚNICAMENTE en formato JSON con esta estructura:
-    {
-        "score": (0 a 100),
-        "variablesUtilizadas": ["ingresos", "capacidad_pago", "documentacion"],
-        "recomendacion": "aprobar" o "rechazar" o "revisar",
-        "confianza": "alta/media/baja",
-        "justificacion": "breve explicación de tu decisión",
-        "versionModelo": "gpt-4o-agent-v1"
-    }`;
-
-    const response = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" }
-    });
-
-    return JSON.parse(response.choices[0].message.content);
-}
-
-app.post('/solicitudes/:id/enviar', async (req, res) => {
+// Endpoint Único de Transición de Máquina de Estados
+app.post('/solicitudes/:id/transicion', async (req, res) => {
     const solicitud = solicitudes.find(s => s.id == req.params.id);
     if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
 
     const cliente = clientes.find(c => c.id == solicitud.clienteId);
+    const { estadoDestino, rol, ...datosExtra } = req.body;
 
-    try {
-        // 1. Cambiar estado a enviada
-        solicitud.estado = 'enviada';
+    const estadoActual = solicitud.estado;
 
-        // 2. Llamar al Agente Real
-        solicitud.estado = 'en analisis';
-        const resultadoIA = await consultarAgenteIA(cliente, solicitud);
-        
-        // 3. Guardar el análisis retornado por la IA
-        solicitud.analisis = resultadoIA;
-        
-        // 4. Pasar a revisión humana si la IA terminó
-        solicitud.estado = 'en revision';
-        
-        solicitud.historial.push({
-            fecha: new Date(),
-            estado: 'en revision',
-            nota: `Agente IA recomienda: ${resultadoIA.recomendacion}. Motivo: ${resultadoIA.justificacion}`
-        });
-
-        res.json({
-            mensaje: "Análisis del agente completado con IA",
-            solicitud: solicitud
-        });
-    } catch (error) {
-        res.status(500).json({ error: "Error conectando con el Agente de IA" });
-    }
-});
-
-
-// Consultar análisis del agente
-
-// Ver analisis del agente
-
-// 5. Registrar revisión del analista (Decisión Final)
-app.post('/solicitudes/:id/revision', (req, res) => {
-    const solicitud = solicitudes.find(s => s.id == req.params.id);
-    
-    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
-
-    // El analista toma la decisión basada en lo que dijo el agente (IA)
-    const { decision, justificacion, analista } = req.body;
-
-    // Validar que la decisión sea válida según la imagen (aprobada o rechazada)
-    if (!['aprobada', 'rechazada'].includes(decision)) {
-        return res.status(400).json({ error: 'La decisión debe ser: aprobada o rechazada' });
+    // 1. Validar que la transición existe
+    const transicionesPermitidas = MAQUINA_ESTADOS[estadoActual];
+    if (!transicionesPermitidas || !transicionesPermitidas[estadoDestino]) {
+        return res.status(400).json({ error: `Transición no válida de '${estadoActual}' a '${estadoDestino}'` });
     }
 
-    // 5. Guardar los datos de la revisión humana
-    solicitud.revision = {
-        analista: analista || "Analista de Turno",
-        decisionFinal: decision,
-        justificacion: justificacion,
-        docsAdicionales: req.body.docsAdicionales || [] // Según tu imagen pide docs adicionales
-    };
+    // 2. Validar el rol
+    const rolesPermitidos = transicionesPermitidas[estadoDestino];
+    if (!rolesPermitidos.includes(rol)) {
+        return res.status(403).json({ error: `El rol '${rol}' no está autorizado para realizar esta transición` });
+    }
 
-    // Actualizar estado final
-    solicitud.estado = decision;
-
-    // 7. Auditoría Completa: Guardamos quién hizo el cambio y cuándo
-    solicitud.historial.push({
-        fecha: new Date(),
-        estado: decision,
-        responsable: 'analista',
-        nota: justificacion
-    });
-
-    res.json({
-        mensaje: `La solicitud ha sido ${decision} por el analista`,
-        solicitud: solicitud
-    });
-});
-
-
-// 6. El analista solicita más información al cliente
-app.post('/solicitudes/:id/solicitar-info', (req, res) => {
-    const solicitud = solicitudes.find(s => s.id == req.params.id);
-    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
-
-    const { mensajeParaCliente } = req.body;
-
-    // Cambiamos el estado para que el cliente sepa que debe actuar
-    solicitud.estado = 'borrador'; // Vuelve a borrador para que pueda editar
-    
-    solicitud.historial.push({
-        fecha: new Date(),
-        estado: 'informacion_pendiente',
-        quien: 'analista',
-        nota: `El analista solicita: ${mensajeParaCliente}`
-    });
-
-    res.json({
-        mensaje: "Se ha solicitado información adicional al cliente",
-        estadoActual: solicitud.estado,
-        historial: solicitud.historial
-    });
-});
-
-// 6. Endpoint de re-análisis con el Agente de IA
-app.post('/solicitudes/:id/reanalizar', async (req, res) => {
-    const solicitud = solicitudes.find(s => s.id == req.params.id);
-    if (!solicitud) return res.status(404).json({ error: 'Solicitud no encontrada' });
-
-    const cliente = clientes.find(c => c.id == solicitud.clienteId);
-
+    // 3. Acciones específicas por estadoDestino
     try {
-        // 1. Cambiamos estado para indicar que el bot está trabajando de nuevo
-        solicitud.estado = 'en analisis';
+        if (estadoDestino === 'en revision') {
+            // IA: Análisis o Re-análisis
+            let prompt = "";
+            let model = "gpt-4o";
+            let systemPrompt = "Eres un Agente Virtual de Riesgo Crediticio.";
 
-        // 2. Llamada al Agente (IA) - Ahora el prompt incluye los documentos actualizados
-        const prompt = `RE-ANÁLISIS DE CRÉDITO. 
-        El analista pidió más información y el cliente actualizó su expediente.
-        Cliente: ${cliente.nombre}. 
-        Nuevos Documentos: ${cliente.documentos.join(', ')}.
-        Monto: $${solicitud.monto}.
-        Por favor, evalúa si con estos nuevos documentos el riesgo ha cambiado.
-        Responde en JSON con: score, recomendacion, variablesUtilizadas y justificacion.`;
+            if (solicitud.analisis) {
+                // Es un re-análisis
+                model = "gpt-4o-mini";
+                systemPrompt = "Eres un Agente Analista de Riesgos. Estás realizando un RE-ANÁLISIS basado en información nueva.";
+                prompt = `RE-ANÁLISIS DE CRÉDITO. 
+                El analista pidió más información y el cliente actualizó su expediente.
+                Cliente: ${cliente.nombre}. 
+                Nuevos Documentos: ${cliente.documentos.join(', ')}.
+                Monto: $${solicitud.monto}.
+                Por favor, evalúa si con estos nuevos documentos el riesgo ha cambiado.
+                Responde en JSON con: score, recomendacion, variablesUtilizadas y justificacion.`;
+            } else {
+                // Es el primer análisis
+                prompt = `
+                Analiza la siguiente solicitud:
+                - Cliente: ${cliente.nombre}
+                - Ingresos mensuales: $${cliente.ingresos}
+                - Documentos entregados: ${cliente.documentos.join(', ')}
+                - Monto solicitado: $${solicitud.monto} a ${solicitud.plazo} meses.
+                - Propósito: ${solicitud.proposito}
 
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-                { role: "system", content: "Eres un Agente Analista de Riesgos. Estás realizando un RE-ANÁLISIS basado en información nueva." },
-                { role: "user", content: prompt }
-            ],
-            response_format: { type: "json_object" }
-        });
+                Responde ÚNICAMENTE en formato JSON con esta estructura:
+                {
+                    "score": (0 a 100),
+                    "variablesUtilizadas": ["ingresos", "capacidad_pago", "documentacion"],
+                    "recomendacion": "aprobar" o "rechazar" o "revisar",
+                    "confianza": "alta/media/baja",
+                    "justificacion": "breve explicación de tu decisión",
+                    "versionModelo": "gpt-4o-agent-v1"
+                }`;
+            }
 
-        // 3. Guardar el nuevo análisis (sobrescribimos el anterior o lo actualizamos)
-        const nuevoAnalisis = JSON.parse(completion.choices[0].message.content);
-        solicitud.analisis = {
-            ...nuevoAnalisis,
-            fechaReanalisis: new Date(),
-            esReanalisis: true
-        };
+            const response = await openai.chat.completions.create({
+                model: model,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: prompt }
+                ],
+                response_format: { type: "json_object" }
+            });
 
-        // 4. Volver a enviar a revisión humana
-        solicitud.estado = 'en revision';
+            const resultadoIA = JSON.parse(response.choices[0].message.content);
 
-        // 7. Auditoría (Historial)
-        solicitud.historial.push({
-            fecha: new Date(),
-            estado: 'en revision',
-            quien: 'agente_ia',
-            nota: 'Re-análisis completado con éxito tras actualización de documentos.'
-        });
+            solicitud.analisis = solicitud.analisis 
+                ? { ...resultadoIA, fechaReanalisis: new Date(), esReanalisis: true }
+                : resultadoIA;
+
+            solicitud.historial.push({
+                fecha: new Date(),
+                estado: estadoDestino,
+                responsable: 'agente_ia',
+                nota: solicitud.analisis.esReanalisis 
+                    ? 'Re-análisis completado con éxito tras actualización de documentos.'
+                    : `Agente IA recomienda: ${resultadoIA.recomendacion}. Motivo: ${resultadoIA.justificacion}`
+            });
+
+        } else if (estadoDestino === 'aprobada' || estadoDestino === 'rechazada') {
+            // Analista aprueba/rechaza
+            const { justificacion, docsAdicionales } = datosExtra;
+            if (!justificacion) return res.status(400).json({ error: 'Debe proveer una justificación' });
+
+            solicitud.revision = {
+                analista: rol || "Analista de Turno",
+                decisionFinal: estadoDestino,
+                justificacion: justificacion,
+                docsAdicionales: docsAdicionales || []
+            };
+
+            solicitud.historial.push({
+                fecha: new Date(),
+                estado: estadoDestino,
+                responsable: rol,
+                nota: justificacion
+            });
+            
+        } else if (estadoDestino === 'borrador') {
+            // Analista pide más info (o cliente edita, aunque no está en la matriz actual como acción del cliente retroceder)
+            const { mensajeParaCliente } = datosExtra;
+
+            solicitud.historial.push({
+                fecha: new Date(),
+                estado: 'informacion_pendiente',
+                responsable: rol,
+                nota: rol === 'analista' ? `El analista solicita: ${mensajeParaCliente || 'Sin mensaje'}` : 'Vuelto a borrador'
+            });
+        } else {
+             // Caso general (ej: de borrador a enviada, enviada a en analisis)
+             solicitud.historial.push({
+                fecha: new Date(),
+                estado: estadoDestino,
+                responsable: rol,
+                nota: `Transición de ${estadoActual} a ${estadoDestino}`
+            });
+        }
+
+        // 4. Actualizar estado
+        solicitud.estado = estadoDestino;
 
         res.json({
-            mensaje: "El agente de IA ha re-evaluado la solicitud con éxito",
+            mensaje: `Transición a '${estadoDestino}' exitosa`,
             solicitud: solicitud
         });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "El Agente IA falló durante el re-análisis." });
+        console.error("Error en transición:", error);
+        res.status(500).json({ error: "Ocurrió un error al procesar la transición." });
     }
 });
 
