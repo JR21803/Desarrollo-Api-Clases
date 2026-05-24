@@ -593,6 +593,131 @@ app.post('/solicitudes/:id/transicion', async (req, res) => {
     }
 });
 
+// CRUD de creditos activos
+
+app.get('/creditos', (req, res) => {
+    res.json(creditos);
+});
+
+//obtener credito por id
+
+app.get('/creditos/:id', (req, res) => {
+    const credito = creditos.find(c => c.id == req.params.id);
+    if (!credito) return res.status(404).json({ error: 'Credito no encontrado' });
+    res.json(credito);
+});
+
+//Crear credito
+app.post('/creditos', (req, res)=>{
+
+    const solicitudId = req.body.solicitudId;   
+    
+    const solicitud = solicitudes.find(s => s.id == solicitudId);
+
+    if(!solicitud){
+        return res.status(404).json({ error: 'Solicitud no encontrada' });
+    }
+
+    if (solicitud.estado !== 'aprobada') {
+        return res.status(400).json({ error: 'Solicitud no aprobada' });
+    }
+
+    const nuevoCredito = {
+        id: Date.now(),
+        solicitudId,
+        saldoPendiente: solicitud.monto,
+        estado: "activo",
+        pagos: []
+    }
+    creditos.push(nuevoCredito);
+    res.status(201).json(nuevoCredito);
+});
+
+//actualizar credito
+
+app.put('/creditos/:id', (req, res) => {
+    const credito = creditos.find(c => c.id == req.params.id);
+    if (!credito) return res.status(404).json({ error: 'Credito no encontrado' });
+
+    credito.estado = req.body.estado || credito.estado;
+    credito.saldoPendiente = req.body.saldoPendiente || credito.saldoPendiente;
+
+    res.json(credito);
+});
+
+//eliminar credito
+app.delete('/creditos/:id', (req, res) => {
+    const credito = creditos.find(c => c.id == req.params.id);
+    if (!credito) return res.status(404).json({ error: 'Credito no encontrado' });
+
+    creditos = creditos.filter(c => c.id != req.params.id);
+    
+    res.status(204).send();
+});
+
+//registrar automaticamente(?)
+
+app.post('/creditos/:id/pagos', (req, res) => {
+
+    const credito = creditos.find(c => c.id == req.params.id);
+    if (!credito) return res.status(404).json({ error: 'Credito no encontrado' });
+
+    const montoPago = req.body.montoPago;
+
+    if(!montoPago || montoPago <= 0){
+        return res.status(400).json({ error: 'Monto de pago inválido' });
+    }
+
+    const pago = {
+        id: Date.now(),
+        monto: montoPago,
+        estado: "pagado"
+    }
+
+    credito.pagos.push(pago);
+
+    credito.saldoPendiente -= montoPago;
+
+    if(credito.saldoPendiente < 0){
+        credito.saldoPendiente = 0;
+    }
+
+    if (credito.saldoPendiente === 0) {
+        credito.estado = "cancelado";
+    } else if (credito.saldoPendiente > 15000)  {
+        credito.estado = "mora";
+    } else{
+        credito.estado = "activo";
+    }
+
+    res.status(201).json({
+        mensaje: "Pago registrado con éxito",
+        credito
+    });
+});
+
+
+//Filtro
+
+app.get('/solicitudes', (req, res) => {
+    
+    let resultado = [...solicitudes];
+
+    if(req.query.estado){
+
+        resultado = resultado.filter(s => s.estado == req.query.estado);
+    }
+
+    res.json(resultado);
+
+});
+
+
+
+
+
+
+
 
 app.listen(3000, () => {
 
