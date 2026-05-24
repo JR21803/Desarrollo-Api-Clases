@@ -1,0 +1,28 @@
+# Seguridad y Variables de Entorno (IMPORTANTE)
+.env
+secret.json
+credentials.json
+
+# Dependencias de paquetes
+node_modules/
+jspm_packages/
+pnpm-lock.yaml
+package-lock.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Carpetas de construcción (si usas TypeScript o NestJS)
+dist/
+build/
+
+# IDEs (VS Code, JetBrains)
+.vscode/
+.idea/
+
+# Archivos temporales de sistema
+.DS_Store
+Thumbs.db
